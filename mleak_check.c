@@ -65,8 +65,8 @@ typedef struct mleak_mem_node
 //    const char      *pName;
     void            *pPtr;
     unsigned int    length;
-    const char      *pPath;
     unsigned int    line_num;
+    char            path[256];
 
 } mleak_mem_node_t;
 
@@ -153,6 +153,7 @@ _node_del(
             pHead = _node_find_head(pNode->next);
 
         pNode->prev = pNode->next = 0;
+        g_mleak_dev.node_cnt--;
     }
 
     return pHead;
@@ -203,7 +204,7 @@ mleak_malloc(
     total_size = sizeof(mleak_mem_node_t) + 4 + length + (MLEAK_PROTECT_SIZE << 2) + 4;
     if( !(pMem = malloc(total_size)) )
     {
-        _err("allocat fail !\n");
+        _err("allocate fail !\n");
         return NULL;
     }
     memset(pMem, MLEAK_PROTECT_PATTERN, total_size);
@@ -216,8 +217,8 @@ mleak_malloc(
     pNode->pBase    = pMem;
     pNode->pPtr     = (unsigned char*)pNode + sizeof(mleak_mem_node_t) + 4;
     pNode->length   = length;
-    pNode->pPath    = pPath;
     pNode->line_num = line_num;
+    snprintf(pNode->path, 256, "%s", pPath);
 
     memset(pNode->pPtr, 0x0, pNode->length);
 
@@ -243,17 +244,18 @@ mleak_free(
     if( !pNode_act )
     {
         pthread_mutex_unlock(&g_mleak_mutex);
-        _err("no pointer to free !!\n");
+        _err("no 0x%x pointer to free, caller:%s #%d !!\n", ptr, path, line_num);
+        mlead_dump();
         return;
     }
 
-    g_mleak_dev.pNode_cur  = _node_find_tail(pNode_act);
     g_mleak_dev.pNode_head = _node_del(pNode_act);
+    g_mleak_dev.pNode_cur  = _node_find_tail(g_mleak_dev.pNode_head);
 
     pthread_mutex_unlock(&g_mleak_mutex);
 
 #if 1
-    {// checkt protect pattern
+    {// check protect pattern
         int             i;
         int             bDirty = 0;
         unsigned char   *pTmp = 0;
@@ -290,7 +292,7 @@ mleak_free(
                  "\tfree %s at %s [#%u]\n"
                  "\tmalloc at %s [#%u]\n",
                  name, path, line_num,
-                 pNode_act->pPath, pNode_act->line_num);
+                 pNode_act->path, pNode_act->line_num);
 
             pTmp = (unsigned char*)((unsigned long)ptr - 4);
             _dbg("\t  hex: %02x %02x %02x %02x\n",
@@ -319,7 +321,7 @@ mlead_dump(void)
     {
         pNode_act = g_mleak_dev.pNode_head;
 
-        if( pNode_act )     _dbg("memory leak:\n");
+        if( pNode_act )     _dbg("\n\nmemory leak:\n");
 
         while( pNode_act )
         {
@@ -332,8 +334,8 @@ mlead_dump(void)
                 break;
             }
 
-            _dbg("\tmalloc (len=%u) at %s [#%u]\n",
-                 pNode_act->length, pNode_act->pPath, pNode_act->line_num);
+            _dbg("\tmalloc (ptr=0x%x, len=%u) at %s [#%u]\n",
+                 pNode_act->pPtr, pNode_act->length, pNode_act->path, pNode_act->line_num);
 
             pTmp = (unsigned char*)((unsigned long)pNode_act + sizeof(mleak_mem_node_t));
             _dbg("\t  hex: ");
@@ -357,3 +359,5 @@ mlead_dump(void)
     pthread_mutex_unlock(&g_mleak_mutex);
     return;
 }
+
+
